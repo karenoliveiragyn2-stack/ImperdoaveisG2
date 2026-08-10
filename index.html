@@ -141,17 +141,27 @@ let checkedState = {};
 const memCache = {};
 function loadState(pv) {
   if (memCache[pv]) return memCache[pv];
-  let val = [];
+  let val = {};
   try {
     const raw = localStorage.getItem('check_' + pv);
-    val = raw ? JSON.parse(raw) : [];
-  } catch (e) { val = []; }
+    val = raw ? JSON.parse(raw) : {};
+  } catch (e) { val = {}; }
   memCache[pv] = val;
   return val;
 }
-function saveState(pv, arr) {
-  memCache[pv] = arr;
-  try { localStorage.setItem('check_' + pv, JSON.stringify(arr)); } catch (e) {}
+function saveState(pv, obj) {
+  memCache[pv] = obj;
+  try { localStorage.setItem('check_' + pv, JSON.stringify(obj)); } catch (e) {}
+}
+function countOffered(c, state) {
+  let n = 0;
+  c.grupos.forEach(function(g) {
+    g.itens.forEach(function(item) { if (state[item]) n++; });
+  });
+  return n;
+}
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
 function badgeFor(dif) {
@@ -227,7 +237,7 @@ async function renderList() {
   for (let i = 0; i < currentList.length; i++) {
     const c = currentList[i];
     const state = await loadState(c.pv);
-    const offeredCount = state.filter(Boolean).length;
+    const offeredCount = countOffered(c, state);
     const pct = Math.min(100, Math.round((offeredCount / c.n_itens) * 100));
     const isDone = offeredCount >= c.n_itens && c.n_itens > 0;
     if (isDone) doneCount++;
@@ -256,7 +266,7 @@ async function renderGoalCard() {
   let hojeClientes = 0;
   for (const c of pool) {
     const state = await loadState(c.pv);
-    const offeredCount = state.filter(Boolean).length;
+    const offeredCount = countOffered(c, state);
     if (offeredCount >= c.n_itens && c.n_itens > 0) hojeClientes++;
   }
   const dif = (realSum + hojeClientes) - metaSum;
@@ -283,22 +293,21 @@ async function openClient(idx) {
 }
 
 function renderDetail(c, state) {
-  const offered = state.filter(Boolean).length;
+  const offered = countOffered(c, state);
   document.getElementById('d-progress').textContent = offered + ' de ' + c.n_itens + ' itens já ofertados hoje';
   document.getElementById('d-bar').style.width = Math.round((offered / c.n_itens) * 100) + '%';
 
   let html = '';
   let flatIdx = 0;
   c.grupos.forEach(function(g) {
-    const startIdx = flatIdx;
-    const groupChecked = g.itens.every(function(_, k){ return !!state[startIdx + k]; });
+    const groupChecked = g.itens.every(function(item){ return !!state[item]; });
     html += '<div class="group-box ' + (groupChecked ? 'g-complete' : '') + '">' +
       '<div class="group-label">' + g.grupo + '</div>';
     g.itens.forEach(function(item) {
       const i = flatIdx;
-      const checked = !!state[i];
+      const checked = !!state[item];
       html += '<div class="item ' + (checked ? 'checked' : '') + '">' +
-        '<input type="checkbox" id="chk' + i + '" ' + (checked ? 'checked' : '') + ' data-idx="' + i + '">' +
+        '<input type="checkbox" id="chk' + i + '" ' + (checked ? 'checked' : '') + ' data-key="' + escapeAttr(item) + '">' +
         '<label for="chk' + i + '">' + item + '</label></div>';
       flatIdx++;
     });
@@ -306,7 +315,7 @@ function renderDetail(c, state) {
   });
   document.getElementById('d-items').innerHTML = html;
   document.getElementById('d-items').querySelectorAll('input[type=checkbox]').forEach(function(box) {
-    box.addEventListener('change', function() { toggleItem(parseInt(box.getAttribute('data-idx'), 10)); });
+    box.addEventListener('change', function() { toggleItem(box.getAttribute('data-key'), box.checked); });
   });
 
   const tip = document.getElementById('d-tip');
@@ -317,9 +326,9 @@ function renderDetail(c, state) {
   }
 }
 
-async function toggleItem(i) {
+async function toggleItem(itemKey, isChecked) {
   const c = currentList[currentIdx];
-  checkedState[i] = document.getElementById('chk' + i).checked;
+  checkedState[itemKey] = isChecked;
   await saveState(c.pv, checkedState);
   renderDetail(c, checkedState);
 }
@@ -341,7 +350,7 @@ function sendDailySummary() {
   let totalFechados = 0;
   CLIENTS.forEach(function(c) {
     const state = loadState(c.pv);
-    const offered = state.filter(Boolean).length;
+    const offered = countOffered(c, state);
     if (offered >= c.n_itens && c.n_itens > 0) {
       totalFechados++;
       if (!porRota[c.rota]) porRota[c.rota] = [];
